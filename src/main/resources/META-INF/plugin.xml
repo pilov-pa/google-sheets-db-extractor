@@ -1,0 +1,53 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
+    <id>org.pilov.googleSheetsDbExtractor</id>
+    <version>1.0</version>
+
+    <!-- Public plugin name should be written in Title Case.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
+    <name>GoogleSheetsDbExtractor</name>
+
+    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
+    <vendor url="https://github.com/pilov-pa">Pilov Aleksey</vendor>
+
+    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
+    <description><![CDATA[
+        Export query results from JetBrains Database Tools/DataGrip grids into a newly created Google Sheet.
+    ]]></description>
+
+    <!-- Product and plugin compatibility requirements.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.database</depends>
+
+    <!-- Extension points defined by the plugin.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceImplementation="org.pilov.scedel.googlesheets.GoogleSheetsSettingsService"/>
+        <applicationConfigurable parentId="tools"
+                                 id="googleSheetsExportSettings"
+                                 displayName="Google Sheets Export"
+                                 instance="org.pilov.scedel.googlesheets.GoogleSheetsSettingsConfigurable"/>
+        <notificationGroup id="Google Sheets Export" displayType="BALLOON" isLogByDefault="true"/>
+    </extensions>
+
+    <actions>
+        <action id="GoogleSheets.ExportToGoogleSheetsAction"
+                class="org.pilov.scedel.googlesheets.GoogleSheetsExportAction"
+                text="Export to Google Sheets..."
+                description="Export current table result to a new Google Sheet"
+                icon="AllIcons.ToolbarDecorator.Export">
+            <add-to-group group-id="Console.TableResult.PopupGroup"
+                          anchor="after"
+                          relative-to-action="Console.TableResult.ShowDumpDialogAction"/>
+            <add-to-group group-id="Console.TableResult.Group.Secondary"
+                          anchor="after"
+                          relative-to-action="Console.TableResult.ShowDumpDialogAction"/>
+            <add-to-group group-id="Console.TableResult.FloatingToolbarGroup"
+                          anchor="after"
+                          relative-to-action="Console.TableResult.ShowDumpDialogAction"/>
+        </action>
+    </actions>
+</idea-plugin>
