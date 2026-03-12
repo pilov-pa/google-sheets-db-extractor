@@ -14,6 +14,7 @@ object GoogleServiceAccountAuth {
     private const val ENV_PRIVATE_KEY_ID = "GOOGLE_API_PRIVATE_KEY_ID"
     private const val ENV_CLIENT_EMAIL = "GOOGLE_API_CLIENT_EMAIL"
     private const val ENV_CLIENT_ID = "GOOGLE_API_CLIENT_ID"
+    private const val ENV_DELEGATED_USER_EMAIL = "GOOGLE_API_DELEGATED_USER_EMAIL"
 
     private const val SCOPE_SPREADSHEETS = "https://www.googleapis.com/auth/spreadsheets"
     private const val SCOPE_DRIVE = "https://www.googleapis.com/auth/drive"
@@ -43,11 +44,19 @@ object GoogleServiceAccountAuth {
             parsedJson?.clientId,
             optionalEnv(ENV_CLIENT_ID, settings.useEnvFallback),
         )
+        val delegatedUserEmail = firstNonBlank(
+            settings.delegatedUserEmail,
+            optionalEnv(ENV_DELEGATED_USER_EMAIL, settings.useEnvFallback),
+        )
 
         val credentials = createCredentials(clientId, clientEmail, privateKey, privateKeyId)
-            .createScoped(listOf(SCOPE_SPREADSHEETS, SCOPE_DRIVE))
+        val delegatedCredentials = delegatedUserEmail
+            ?.takeIf { it.isNotBlank() }
+            ?.let { credentials.createDelegated(it) }
+            ?: credentials
+        val scopedCredentials = delegatedCredentials.createScoped(listOf(SCOPE_SPREADSHEETS, SCOPE_DRIVE))
 
-        return HttpCredentialsAdapter(credentials)
+        return HttpCredentialsAdapter(scopedCredentials)
     }
 
     private fun createCredentials(

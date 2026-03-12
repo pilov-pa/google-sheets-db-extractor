@@ -9,12 +9,14 @@ import com.google.api.services.sheets.v4.Sheets
 import com.google.api.services.sheets.v4.model.Spreadsheet
 import com.google.api.services.sheets.v4.model.SpreadsheetProperties
 import com.google.api.services.sheets.v4.model.ValueRange
+import java.io.Console
 
 object GoogleSheetsExporter {
 
     data class ExportResult(
         val spreadsheetId: String,
         val spreadsheetUrl: String,
+        val warning: String? = null,
     )
 
     fun export(
@@ -22,6 +24,7 @@ object GoogleSheetsExporter {
         title: String,
         rows: List<List<Any>>,
         shareWithEmail: String? = null,
+        transferOwnership: Boolean = false,
     ): ExportResult {
         require(rows.isNotEmpty()) { "Nothing to export." }
 
@@ -55,20 +58,6 @@ object GoogleSheetsExporter {
             .update(spreadsheetId, range, ValueRange().setValues(values))
             .setValueInputOption("RAW")
             .execute()
-
-        val email = shareWithEmail?.trim().orEmpty()
-        if (email.isNotEmpty()) {
-            val drive = Drive.Builder(transport, jsonFactory, requestInitializer)
-                .setApplicationName(appName)
-                .build()
-            drive.permissions()
-                .create(
-                    spreadsheetId,
-                    Permission().setType("user").setRole("writer").setEmailAddress(email),
-                )
-                .setSendNotificationEmail(false)
-                .execute()
-        }
 
         return ExportResult(spreadsheetId = spreadsheetId, spreadsheetUrl = spreadsheetUrl)
     }

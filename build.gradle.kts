@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "org.pilov.googleSheetsDbExtractor"
-version = "1.0"
+version = "1.2"
 
 repositories {
     mavenCentral()
@@ -20,6 +20,7 @@ dependencies {
     implementation("com.google.apis:google-api-services-sheets:v4-rev20240319-2.0.0")
     implementation("com.google.apis:google-api-services-drive:v3-rev20250701-2.0.0")
     implementation("com.google.auth:google-auth-library-oauth2-http:1.24.1")
+    implementation("com.google.oauth-client:google-oauth-client-jetty:1.39.0")
 
     intellijPlatform {
         local("/Applications/Rider.app")

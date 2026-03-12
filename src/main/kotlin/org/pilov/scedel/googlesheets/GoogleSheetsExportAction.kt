@@ -34,14 +34,14 @@ class GoogleSheetsExportAction : DumbAwareAction() {
 
         object : Task.Backgroundable(project, "Export to Google Sheets", true) {
             override fun run(indicator: ProgressIndicator) {
-                indicator.text = "Loading Google service account credentials..."
-                val requestInitializer = GoogleServiceAccountAuth.createRequestInitializer()
-                val shareWithEmail = service<GoogleSheetsSettingsService>()
-                    .getCredentialsData()
-                    .shareWithEmail
+                indicator.text = "Loading Google credentials..."
+                val requestInitializer = GoogleAuthProvider.createRequestInitializer()
+                val settingsService = service<GoogleSheetsSettingsService>()
+                val shareWithEmail = settingsService.getShareWithEmail()
+                val transferOwnership = settingsService.shouldTransferOwnership()
 
                 indicator.text = "Collecting table data..."
-                val rows = GridDataCollector.collectRows(grid)
+                val rows = GridDataCollector.collectRows(project, grid, indicator)
                 if (rows.size <= 1) {
                     throw IllegalStateException("No rows to export.")
                 }
@@ -53,8 +53,9 @@ class GoogleSheetsExportAction : DumbAwareAction() {
                     title = title,
                     rows = rows,
                     shareWithEmail = shareWithEmail,
+                    transferOwnership = transferOwnership,
                 )
-                notifySuccess(project, result.spreadsheetUrl)
+                notifySuccess(project, result.spreadsheetUrl, result.warning)
             }
 
             override fun onThrowable(error: Throwable) {
@@ -72,12 +73,13 @@ class GoogleSheetsExportAction : DumbAwareAction() {
         return "$baseName $timestamp"
     }
 
-    private fun notifySuccess(project: Project, url: String) {
+    private fun notifySuccess(project: Project, url: String, warning: String?) {
+        val warningSuffix = warning?.let { "<br/><br/>$it" }.orEmpty()
         val notification = NotificationGroupManager.getInstance()
             .getNotificationGroup(GoogleSheetsNotifications.GROUP_ID)
             .createNotification(
                 "Export complete",
-                "Spreadsheet created: <a href=\"$url\">$url</a>",
+                "Spreadsheet created: <a href=\"$url\">$url</a>$warningSuffix",
                 NotificationType.INFORMATION,
                 NotificationListener.URL_OPENING_LISTENER,
             )

@@ -2,7 +2,6 @@ package org.pilov.scedel.googlesheets
 
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
-import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
@@ -11,14 +10,27 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 
 class GoogleSheetsSettingsConfigurable : Configurable {
-    private val privateKeyIdField = JBPasswordField()
-    private val clientEmailField = JBPasswordField()
-    private val clientIdField = JBPasswordField()
-    private val privateKeyField = JBPasswordField()
-    private val shareWithEmailField = JBTextField()
-    private val useEnvFallback = JBCheckBox("Use environment variables as fallback", true)
+    private val oauthClientIdField = JBPasswordField()
+    private val oauthClientSecretField = JBPasswordField()
+    private val oauthRedirectUriField = JBTextField()
 
     private var panel: JPanel? = null
+    private var initialData = GoogleSheetsSettingsService.CredentialsData(
+        privateKeyId = "",
+        clientEmail = "",
+        clientId = "",
+        privateKey = "",
+        oauthClientId = "",
+        oauthClientSecret = "",
+        oauthRefreshToken = "",
+        oauthAccessToken = "",
+        oauthAccessTokenExpiryEpochMs = 0L,
+        oauthRedirectUri = "http://localhost",
+        shareWithEmail = "",
+        transferOwnership = false,
+        delegatedUserEmail = "",
+        useEnvFallback = true,
+    )
 
     override fun getDisplayName(): String = "Google Sheets Export"
 
@@ -28,19 +40,17 @@ class GoogleSheetsSettingsConfigurable : Configurable {
         }
 
         panel = FormBuilder.createFormBuilder()
-            .addLabeledComponent("Private Key ID:", privateKeyIdField)
-            .addLabeledComponent("Client Email:", clientEmailField)
-            .addLabeledComponent("Client ID (optional):", clientIdField)
-            .addLabeledComponent("Private Key:", privateKeyField)
-            .addLabeledComponent("Share new sheet with email:", shareWithEmailField)
-            .addComponent(useEnvFallback)
+            .addSeparator()
+            .addComponent(JBLabel("<html><b>OAuth</b></html>"))
+            .addLabeledComponent("OAuth Client ID:", oauthClientIdField)
+            .addLabeledComponent("OAuth Client Secret:", oauthClientSecretField)
+            .addLabeledComponent("OAuth Redirect URI:", oauthRedirectUriField)
             .addSeparator(8)
             .addComponent(
                 JBLabel(
-                    "<html>Required for service account auth. " +
-                        "Values are taken from this settings page, " +
-                        "and optionally from env vars:<br/>" +
-                        "GOOGLE_API_PRIVATE_KEY, GOOGLE_API_PRIVATE_KEY_ID, GOOGLE_API_CLIENT_EMAIL, GOOGLE_API_CLIENT_ID.</html>",
+                    "<html>OAuth credentials can be taken from your installed-app JSON (`installed.client_id` and `installed.client_secret`). " +
+                        "Redirect URI should stay <code>http://localhost</code>.<br/>" +
+                        "On first export, browser authorization opens and refresh token is stored securely in IDE Password Safe.</html>",
                 ),
             )
             .addComponentFillVertically(JPanel(), 0)
@@ -51,37 +61,34 @@ class GoogleSheetsSettingsConfigurable : Configurable {
     }
 
     override fun isModified(): Boolean {
-        val service = service<GoogleSheetsSettingsService>()
-        val current = service.getCredentialsData()
-        return read(privateKeyIdField) != current.privateKeyId.trim() ||
-            read(clientEmailField) != current.clientEmail.trim() ||
-            read(clientIdField) != current.clientId.trim() ||
-            read(privateKeyField) != current.privateKey.trim() ||
-            shareWithEmailField.text.trim() != current.shareWithEmail.trim() ||
-            useEnvFallback.isSelected != current.useEnvFallback
+        return currentDataFromFields() != initialData
     }
 
     override fun apply() {
         val service = service<GoogleSheetsSettingsService>()
+        val current = currentDataFromFields()
         service.update(
-            privateKeyId = read(privateKeyIdField),
-            clientEmail = read(clientEmailField),
-            clientId = read(clientIdField),
-            privateKey = read(privateKeyField),
-            shareWithEmail = shareWithEmailField.text,
-            useEnvFallback = useEnvFallback.isSelected,
+            privateKeyId = initialData.privateKeyId,
+            clientEmail = initialData.clientEmail,
+            clientId = initialData.clientId,
+            privateKey = initialData.privateKey,
+            oauthClientId = current.oauthClientId,
+            oauthClientSecret = current.oauthClientSecret,
+            oauthRedirectUri = current.oauthRedirectUri,
+            shareWithEmail = initialData.shareWithEmail,
+            transferOwnership = initialData.transferOwnership,
+            delegatedUserEmail = initialData.delegatedUserEmail,
+            useEnvFallback = initialData.useEnvFallback,
         )
+        initialData = service.getCredentialsData()
     }
 
     override fun reset() {
         val service = service<GoogleSheetsSettingsService>()
-        val current = service.getCredentialsData()
-        privateKeyIdField.text = current.privateKeyId
-        clientEmailField.text = current.clientEmail
-        clientIdField.text = current.clientId
-        privateKeyField.text = current.privateKey
-        shareWithEmailField.text = current.shareWithEmail
-        useEnvFallback.isSelected = current.useEnvFallback
+        initialData = service.getCredentialsData()
+        oauthClientIdField.text = initialData.oauthClientId
+        oauthClientSecretField.text = initialData.oauthClientSecret
+        oauthRedirectUriField.text = initialData.oauthRedirectUri
     }
 
     override fun disposeUIResources() {
@@ -89,4 +96,23 @@ class GoogleSheetsSettingsConfigurable : Configurable {
     }
 
     private fun read(field: JBPasswordField): String = String(field.password).trim()
+
+    private fun currentDataFromFields(): GoogleSheetsSettingsService.CredentialsData {
+        return GoogleSheetsSettingsService.CredentialsData(
+            privateKeyId = initialData.privateKeyId,
+            clientEmail = initialData.clientEmail,
+            clientId = initialData.clientId,
+            privateKey = initialData.privateKey,
+            oauthClientId = read(oauthClientIdField),
+            oauthClientSecret = read(oauthClientSecretField),
+            oauthRefreshToken = initialData.oauthRefreshToken,
+            oauthAccessToken = initialData.oauthAccessToken,
+            oauthAccessTokenExpiryEpochMs = initialData.oauthAccessTokenExpiryEpochMs,
+            oauthRedirectUri = oauthRedirectUriField.text.trim(),
+            shareWithEmail = initialData.shareWithEmail,
+            transferOwnership = initialData.transferOwnership,
+            delegatedUserEmail = initialData.delegatedUserEmail,
+            useEnvFallback = initialData.useEnvFallback,
+        )
+    }
 }

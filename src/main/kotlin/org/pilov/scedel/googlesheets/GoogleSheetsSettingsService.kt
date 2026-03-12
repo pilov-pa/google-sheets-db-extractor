@@ -8,6 +8,8 @@ import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
+import java.nio.charset.StandardCharsets
+import java.util.Base64
 
 @Service(Service.Level.APP)
 @State(name = "GoogleSheetsSettingsService", storages = [Storage("googleSheetsDbExtractor.settings.xml")])
@@ -15,6 +17,9 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
 
     class State {
         var shareWithEmail: String = ""
+        var transferOwnership: Boolean = false
+        var delegatedUserEmail: String = ""
+        var oauthRedirectUri: String = "http://localhost"
         var useEnvFallback: Boolean = true
     }
 
@@ -23,7 +28,15 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
         val clientEmail: String,
         val clientId: String,
         val privateKey: String,
+        val oauthClientId: String,
+        val oauthClientSecret: String,
+        val oauthRefreshToken: String,
+        val oauthAccessToken: String,
+        val oauthAccessTokenExpiryEpochMs: Long,
+        val oauthRedirectUri: String,
         val shareWithEmail: String,
+        val transferOwnership: Boolean,
+        val delegatedUserEmail: String,
         val useEnvFallback: Boolean,
     )
 
@@ -36,12 +49,43 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
     }
 
     fun getCredentialsData(): CredentialsData {
+        val combined = getCombinedSecret()?.let(::decodeCombinedSecret)
+        if (combined != null) {
+            val oauth = getOAuthSecretData()
+            return CredentialsData(
+                privateKeyId = combined.privateKeyId,
+                clientEmail = combined.clientEmail,
+                clientId = combined.clientId,
+                privateKey = combined.privateKey,
+                oauthClientId = oauth.clientId,
+                oauthClientSecret = oauth.clientSecret,
+                oauthRefreshToken = oauth.refreshToken,
+                oauthAccessToken = oauth.accessToken,
+                oauthAccessTokenExpiryEpochMs = oauth.accessTokenExpiryEpochMs,
+                oauthRedirectUri = state.oauthRedirectUri,
+                shareWithEmail = state.shareWithEmail,
+                transferOwnership = state.transferOwnership,
+                delegatedUserEmail = state.delegatedUserEmail,
+                useEnvFallback = state.useEnvFallback,
+            )
+        }
+
+        // Legacy fallback for old versions that stored each field separately.
+        val oauth = getOAuthSecretData()
         return CredentialsData(
             privateKeyId = getSecret(PRIVATE_KEY_ID_SECRET_KEY),
             clientEmail = getSecret(CLIENT_EMAIL_SECRET_KEY),
             clientId = getSecret(CLIENT_ID_SECRET_KEY),
             privateKey = getPrivateKey(),
+            oauthClientId = oauth.clientId,
+            oauthClientSecret = oauth.clientSecret,
+            oauthRefreshToken = oauth.refreshToken,
+            oauthAccessToken = oauth.accessToken,
+            oauthAccessTokenExpiryEpochMs = oauth.accessTokenExpiryEpochMs,
+            oauthRedirectUri = state.oauthRedirectUri,
             shareWithEmail = state.shareWithEmail,
+            transferOwnership = state.transferOwnership,
+            delegatedUserEmail = state.delegatedUserEmail,
             useEnvFallback = state.useEnvFallback,
         )
     }
@@ -51,15 +95,81 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
         clientEmail: String,
         clientId: String,
         privateKey: String,
+        oauthClientId: String,
+        oauthClientSecret: String,
+        oauthRedirectUri: String,
         shareWithEmail: String,
+        transferOwnership: Boolean,
+        delegatedUserEmail: String,
         useEnvFallback: Boolean,
     ) {
-        setSecret(PRIVATE_KEY_ID_SECRET_KEY, privateKeyId)
-        setSecret(CLIENT_EMAIL_SECRET_KEY, clientEmail)
-        setSecret(CLIENT_ID_SECRET_KEY, clientId)
+        val normalizedOauthClientId = oauthClientId.trim()
+        val normalizedOauthClientSecret = oauthClientSecret.trim()
+        val existingOAuth = getOAuthSecretData()
+        val preserveTokens = existingOAuth.clientId == normalizedOauthClientId &&
+            existingOAuth.clientSecret == normalizedOauthClientSecret
+        setOAuthSecretData(
+            OAuthSecretData(
+                clientId = normalizedOauthClientId,
+                clientSecret = normalizedOauthClientSecret,
+                refreshToken = if (preserveTokens) existingOAuth.refreshToken else "",
+                accessToken = if (preserveTokens) existingOAuth.accessToken else "",
+                accessTokenExpiryEpochMs = if (preserveTokens) existingOAuth.accessTokenExpiryEpochMs else 0L,
+            ),
+        )
+
+        setCombinedSecret(
+            encodeCombinedSecret(
+                privateKeyId = privateKeyId.trim(),
+                clientEmail = clientEmail.trim(),
+                clientId = clientId.trim(),
+                privateKey = privateKey.trim(),
+            ),
+        )
+
+        // Cleanup legacy keys to prevent extra keychain prompts.
+        clearSecret(PRIVATE_KEY_ID_SECRET_KEY)
+        clearSecret(CLIENT_EMAIL_SECRET_KEY)
+        clearSecret(CLIENT_ID_SECRET_KEY)
+        clearPrivateKey()
+
         state.useEnvFallback = useEnvFallback
         state.shareWithEmail = shareWithEmail.trim()
-        setPrivateKey(privateKey.trim())
+        state.transferOwnership = transferOwnership
+        state.delegatedUserEmail = delegatedUserEmail.trim()
+        state.oauthRedirectUri = oauthRedirectUri.trim().ifBlank { "http://localhost" }
+    }
+
+    fun updateOAuthTokens(
+        refreshToken: String,
+        accessToken: String,
+        accessTokenExpiryEpochMs: Long,
+    ) {
+        val existingOAuth = getOAuthSecretData()
+        if (existingOAuth.clientId.isBlank() || existingOAuth.clientSecret.isBlank()) {
+            return
+        }
+        setOAuthSecretData(
+            existingOAuth.copy(
+                refreshToken = refreshToken.trim(),
+                accessToken = accessToken.trim(),
+                accessTokenExpiryEpochMs = accessTokenExpiryEpochMs,
+            ),
+        )
+    }
+
+    fun clearOAuthTokens() {
+        val existingOAuth = getOAuthSecretData()
+        if (existingOAuth.clientId.isBlank() && existingOAuth.clientSecret.isBlank()) {
+            return
+        }
+        setOAuthSecretData(
+            existingOAuth.copy(
+                refreshToken = "",
+                accessToken = "",
+                accessTokenExpiryEpochMs = 0L,
+            ),
+        )
     }
 
     private fun getPrivateKey(): String {
@@ -69,6 +179,10 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
     private fun setPrivateKey(privateKey: String) {
         val credentials = if (privateKey.isBlank()) null else Credentials(PRIVATE_KEY_SECRET_KEY, privateKey)
         PasswordSafe.instance.set(privateKeyAttributes(), credentials)
+    }
+
+    private fun clearPrivateKey() {
+        PasswordSafe.instance.set(privateKeyAttributes(), null)
     }
 
     private fun getSecret(secretKey: String): String {
@@ -81,12 +195,140 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
         PasswordSafe.instance.set(secretAttributes(secretKey), credentials)
     }
 
+    private fun clearSecret(secretKey: String) {
+        PasswordSafe.instance.set(secretAttributes(secretKey), null)
+    }
+
+    private fun getCombinedSecret(): String? {
+        return PasswordSafe.instance.get(combinedSecretAttributes())?.getPasswordAsString()?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun setCombinedSecret(payload: String) {
+        val credentials = if (payload.isBlank()) null else Credentials(COMBINED_SECRET_KEY, payload)
+        PasswordSafe.instance.set(combinedSecretAttributes(), credentials)
+    }
+
     private fun privateKeyAttributes(): CredentialAttributes {
         return secretAttributes(PRIVATE_KEY_SECRET_KEY)
     }
 
+    private fun combinedSecretAttributes(): CredentialAttributes {
+        return secretAttributes(COMBINED_SECRET_KEY)
+    }
+
+    private fun oauthSecretAttributes(): CredentialAttributes {
+        return secretAttributes(OAUTH_COMBINED_SECRET_KEY)
+    }
+
     private fun secretAttributes(secretKey: String): CredentialAttributes {
         return CredentialAttributes(generateServiceName("GoogleSheetsDbExtractor", secretKey))
+    }
+
+    fun getShareWithEmail(): String = state.shareWithEmail.trim()
+    fun shouldTransferOwnership(): Boolean = state.transferOwnership
+
+    private fun encodeCombinedSecret(
+        privateKeyId: String,
+        clientEmail: String,
+        clientId: String,
+        privateKey: String,
+    ): String {
+        fun encode(value: String): String = Base64.getEncoder().encodeToString(value.toByteArray(StandardCharsets.UTF_8))
+        return listOf(
+            SECRET_VERSION,
+            encode(privateKeyId),
+            encode(clientEmail),
+            encode(clientId),
+            encode(privateKey),
+        ).joinToString(SECRET_SEPARATOR)
+    }
+
+    private fun decodeCombinedSecret(payload: String): CombinedSecret? {
+        val parts = payload.split(SECRET_SEPARATOR)
+        if (parts.size != 5 || parts[0] != SECRET_VERSION) {
+            return null
+        }
+        fun decode(value: String): String {
+            val bytes = Base64.getDecoder().decode(value)
+            return String(bytes, StandardCharsets.UTF_8)
+        }
+        return runCatching {
+            CombinedSecret(
+                privateKeyId = decode(parts[1]),
+                clientEmail = decode(parts[2]),
+                clientId = decode(parts[3]),
+                privateKey = decode(parts[4]),
+            )
+        }.getOrNull()
+    }
+
+    private data class CombinedSecret(
+        val privateKeyId: String,
+        val clientEmail: String,
+        val clientId: String,
+        val privateKey: String,
+    )
+
+    private data class OAuthSecretData(
+        val clientId: String,
+        val clientSecret: String,
+        val refreshToken: String,
+        val accessToken: String,
+        val accessTokenExpiryEpochMs: Long,
+    )
+
+    private fun getOAuthSecretData(): OAuthSecretData {
+        val payload = PasswordSafe.instance.get(oauthSecretAttributes())?.getPasswordAsString().orEmpty().trim()
+        if (payload.isBlank()) {
+            return OAuthSecretData("", "", "", "", 0L)
+        }
+        return decodeOAuthSecret(payload) ?: OAuthSecretData("", "", "", "", 0L)
+    }
+
+    private fun setOAuthSecretData(data: OAuthSecretData) {
+        val isEmpty = data.clientId.isBlank() &&
+            data.clientSecret.isBlank() &&
+            data.refreshToken.isBlank() &&
+            data.accessToken.isBlank() &&
+            data.accessTokenExpiryEpochMs == 0L
+        val credentials = if (isEmpty) {
+            null
+        } else {
+            Credentials(OAUTH_COMBINED_SECRET_KEY, encodeOAuthSecret(data))
+        }
+        PasswordSafe.instance.set(oauthSecretAttributes(), credentials)
+    }
+
+    private fun encodeOAuthSecret(data: OAuthSecretData): String {
+        fun encode(value: String): String = Base64.getEncoder().encodeToString(value.toByteArray(StandardCharsets.UTF_8))
+        return listOf(
+            OAUTH_SECRET_VERSION,
+            encode(data.clientId),
+            encode(data.clientSecret),
+            encode(data.refreshToken),
+            encode(data.accessToken),
+            data.accessTokenExpiryEpochMs.toString(),
+        ).joinToString(SECRET_SEPARATOR)
+    }
+
+    private fun decodeOAuthSecret(payload: String): OAuthSecretData? {
+        val parts = payload.split(SECRET_SEPARATOR)
+        if (parts.size != 6 || parts[0] != OAUTH_SECRET_VERSION) {
+            return null
+        }
+        fun decode(value: String): String {
+            val bytes = Base64.getDecoder().decode(value)
+            return String(bytes, StandardCharsets.UTF_8)
+        }
+        return runCatching {
+            OAuthSecretData(
+                clientId = decode(parts[1]),
+                clientSecret = decode(parts[2]),
+                refreshToken = decode(parts[3]),
+                accessToken = decode(parts[4]),
+                accessTokenExpiryEpochMs = parts[5].toLongOrNull() ?: 0L,
+            )
+        }.getOrNull()
     }
 
     companion object {
@@ -94,5 +336,10 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
         private const val PRIVATE_KEY_ID_SECRET_KEY = "google-service-account-private-key-id"
         private const val CLIENT_EMAIL_SECRET_KEY = "google-service-account-client-email"
         private const val CLIENT_ID_SECRET_KEY = "google-service-account-client-id"
+        private const val COMBINED_SECRET_KEY = "google-service-account-combined-secret"
+        private const val OAUTH_COMBINED_SECRET_KEY = "google-oauth-combined-secret"
+        private const val SECRET_VERSION = "v1"
+        private const val OAUTH_SECRET_VERSION = "oauth-v1"
+        private const val SECRET_SEPARATOR = "|"
     }
 }
