@@ -19,6 +19,8 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
         var shareWithEmail: String = ""
         var transferOwnership: Boolean = false
         var delegatedUserEmail: String = ""
+        var oauthClientId: String = ""
+        var oauthClientSecret: String = ""
         var oauthRedirectUri: String = "http://localhost"
         var useEnvFallback: Boolean = true
     }
@@ -50,15 +52,15 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
 
     fun getCredentialsData(): CredentialsData {
         val combined = getCombinedSecret()?.let(::decodeCombinedSecret)
+        val oauth = getOAuthSecretData()
         if (combined != null) {
-            val oauth = getOAuthSecretData()
             return CredentialsData(
                 privateKeyId = combined.privateKeyId,
                 clientEmail = combined.clientEmail,
                 clientId = combined.clientId,
                 privateKey = combined.privateKey,
-                oauthClientId = oauth.clientId,
-                oauthClientSecret = oauth.clientSecret,
+                oauthClientId = state.oauthClientId,
+                oauthClientSecret = state.oauthClientSecret,
                 oauthRefreshToken = oauth.refreshToken,
                 oauthAccessToken = oauth.accessToken,
                 oauthAccessTokenExpiryEpochMs = oauth.accessTokenExpiryEpochMs,
@@ -71,14 +73,13 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
         }
 
         // Legacy fallback for old versions that stored each field separately.
-        val oauth = getOAuthSecretData()
         return CredentialsData(
             privateKeyId = getSecret(PRIVATE_KEY_ID_SECRET_KEY),
             clientEmail = getSecret(CLIENT_EMAIL_SECRET_KEY),
             clientId = getSecret(CLIENT_ID_SECRET_KEY),
             privateKey = getPrivateKey(),
-            oauthClientId = oauth.clientId,
-            oauthClientSecret = oauth.clientSecret,
+            oauthClientId = state.oauthClientId,
+            oauthClientSecret = state.oauthClientSecret,
             oauthRefreshToken = oauth.refreshToken,
             oauthAccessToken = oauth.accessToken,
             oauthAccessTokenExpiryEpochMs = oauth.accessTokenExpiryEpochMs,
@@ -106,12 +107,10 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
         val normalizedOauthClientId = oauthClientId.trim()
         val normalizedOauthClientSecret = oauthClientSecret.trim()
         val existingOAuth = getOAuthSecretData()
-        val preserveTokens = existingOAuth.clientId == normalizedOauthClientId &&
-            existingOAuth.clientSecret == normalizedOauthClientSecret
+        val preserveTokens = state.oauthClientId == normalizedOauthClientId &&
+            state.oauthClientSecret == normalizedOauthClientSecret
         setOAuthSecretData(
             OAuthSecretData(
-                clientId = normalizedOauthClientId,
-                clientSecret = normalizedOauthClientSecret,
                 refreshToken = if (preserveTokens) existingOAuth.refreshToken else "",
                 accessToken = if (preserveTokens) existingOAuth.accessToken else "",
                 accessTokenExpiryEpochMs = if (preserveTokens) existingOAuth.accessTokenExpiryEpochMs else 0L,
@@ -137,6 +136,8 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
         state.shareWithEmail = shareWithEmail.trim()
         state.transferOwnership = transferOwnership
         state.delegatedUserEmail = delegatedUserEmail.trim()
+        state.oauthClientId = normalizedOauthClientId
+        state.oauthClientSecret = normalizedOauthClientSecret
         state.oauthRedirectUri = oauthRedirectUri.trim().ifBlank { "http://localhost" }
     }
 
@@ -145,10 +146,10 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
         accessToken: String,
         accessTokenExpiryEpochMs: Long,
     ) {
-        val existingOAuth = getOAuthSecretData()
-        if (existingOAuth.clientId.isBlank() || existingOAuth.clientSecret.isBlank()) {
+        if (state.oauthClientId.isBlank() || state.oauthClientSecret.isBlank()) {
             return
         }
+        val existingOAuth = getOAuthSecretData()
         setOAuthSecretData(
             existingOAuth.copy(
                 refreshToken = refreshToken.trim(),
@@ -160,7 +161,7 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
 
     fun clearOAuthTokens() {
         val existingOAuth = getOAuthSecretData()
-        if (existingOAuth.clientId.isBlank() && existingOAuth.clientSecret.isBlank()) {
+        if (existingOAuth.refreshToken.isBlank() && existingOAuth.accessToken.isBlank()) {
             return
         }
         setOAuthSecretData(
@@ -270,8 +271,6 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
     )
 
     private data class OAuthSecretData(
-        val clientId: String,
-        val clientSecret: String,
         val refreshToken: String,
         val accessToken: String,
         val accessTokenExpiryEpochMs: Long,
@@ -280,15 +279,13 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
     private fun getOAuthSecretData(): OAuthSecretData {
         val payload = PasswordSafe.instance.get(oauthSecretAttributes())?.getPasswordAsString().orEmpty().trim()
         if (payload.isBlank()) {
-            return OAuthSecretData("", "", "", "", 0L)
+            return OAuthSecretData("", "", 0L)
         }
-        return decodeOAuthSecret(payload) ?: OAuthSecretData("", "", "", "", 0L)
+        return decodeOAuthSecret(payload) ?: OAuthSecretData("", "", 0L)
     }
 
     private fun setOAuthSecretData(data: OAuthSecretData) {
-        val isEmpty = data.clientId.isBlank() &&
-            data.clientSecret.isBlank() &&
-            data.refreshToken.isBlank() &&
+        val isEmpty = data.refreshToken.isBlank() &&
             data.accessToken.isBlank() &&
             data.accessTokenExpiryEpochMs == 0L
         val credentials = if (isEmpty) {
@@ -303,8 +300,6 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
         fun encode(value: String): String = Base64.getEncoder().encodeToString(value.toByteArray(StandardCharsets.UTF_8))
         return listOf(
             OAUTH_SECRET_VERSION,
-            encode(data.clientId),
-            encode(data.clientSecret),
             encode(data.refreshToken),
             encode(data.accessToken),
             data.accessTokenExpiryEpochMs.toString(),
@@ -313,22 +308,29 @@ class GoogleSheetsSettingsService : PersistentStateComponent<GoogleSheetsSetting
 
     private fun decodeOAuthSecret(payload: String): OAuthSecretData? {
         val parts = payload.split(SECRET_SEPARATOR)
-        if (parts.size != 6 || parts[0] != OAUTH_SECRET_VERSION) {
-            return null
-        }
         fun decode(value: String): String {
             val bytes = Base64.getDecoder().decode(value)
             return String(bytes, StandardCharsets.UTF_8)
         }
-        return runCatching {
-            OAuthSecretData(
-                clientId = decode(parts[1]),
-                clientSecret = decode(parts[2]),
-                refreshToken = decode(parts[3]),
-                accessToken = decode(parts[4]),
-                accessTokenExpiryEpochMs = parts[5].toLongOrNull() ?: 0L,
-            )
-        }.getOrNull()
+        return when {
+            // Current format: oauth-v1|refresh|access|expiry
+            parts.size == 4 && parts[0] == OAUTH_SECRET_VERSION -> runCatching {
+                OAuthSecretData(
+                    refreshToken = decode(parts[1]),
+                    accessToken = decode(parts[2]),
+                    accessTokenExpiryEpochMs = parts[3].toLongOrNull() ?: 0L,
+                )
+            }.getOrNull()
+            // Legacy format: oauth-v1|clientId|clientSecret|refresh|access|expiry
+            parts.size == 6 && parts[0] == OAUTH_SECRET_VERSION -> runCatching {
+                OAuthSecretData(
+                    refreshToken = decode(parts[3]),
+                    accessToken = decode(parts[4]),
+                    accessTokenExpiryEpochMs = parts[5].toLongOrNull() ?: 0L,
+                )
+            }.getOrNull()
+            else -> null
+        }
     }
 
     companion object {

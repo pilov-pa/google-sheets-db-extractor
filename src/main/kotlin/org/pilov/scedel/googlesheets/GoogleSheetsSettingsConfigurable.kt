@@ -3,15 +3,14 @@ package org.pilov.scedel.googlesheets
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import javax.swing.JComponent
 import javax.swing.JPanel
 
 class GoogleSheetsSettingsConfigurable : Configurable {
-    private val oauthClientIdField = JBPasswordField()
-    private val oauthClientSecretField = JBPasswordField()
+    private val oauthClientIdField = JBTextField()
+    private val oauthClientSecretField = JBTextField()
     private val oauthRedirectUriField = JBTextField()
 
     private var panel: JPanel? = null
@@ -95,7 +94,7 @@ class GoogleSheetsSettingsConfigurable : Configurable {
         panel = null
     }
 
-    private fun read(field: JBPasswordField): String = String(field.password).trim()
+    private fun read(field: JBTextField): String = field.text.trim()
 
     private fun currentDataFromFields(): GoogleSheetsSettingsService.CredentialsData {
         return GoogleSheetsSettingsService.CredentialsData(
